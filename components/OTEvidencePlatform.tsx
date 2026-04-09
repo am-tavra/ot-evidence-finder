@@ -91,6 +91,43 @@ const apis: Record<string, { name: string; icon: string; color: string; search: 
       });
     },
   },
+  europepmc: {
+    name: "Europe PMC", icon: "🇪🇺", color: "#006B54",
+    async search(terms, age) {
+      const q = encodeURIComponent(`(${terms}) AND (occupational therapy) AND (pediatric OR child OR preschool OR ages ${age})`);
+      const r = await fetch(`https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=${q}&resultType=core&pageSize=10&format=json`);
+      const d = await r.json();
+      return (d?.resultList?.result || []).map((p: any) => ({
+        title: p.title,
+        authors: (p.authorList?.author || []).map((a: any) => a.fullName || `${a.firstName || ""} ${a.lastName || ""}`).slice(0, 4).join(", "),
+        year: String(p.pubYear || ""),
+        journal: p.journalTitle || "",
+        abstract: p.abstractText || "",
+        citations: p.citedByCount,
+        url: p.doi ? `https://doi.org/${p.doi}` : p.pmid ? `https://pubmed.ncbi.nlm.nih.gov/${p.pmid}/` : "",
+        source: "Europe PMC",
+        id: p.id || p.pmid || p.doi,
+      }));
+    },
+  },
+  core: {
+    name: "CORE", icon: "🌐", color: "#4A4A8A",
+    async search(terms, age) {
+      const q = encodeURIComponent(`${terms} occupational therapy pediatric children ages ${age}`);
+      const r = await fetch(`https://api.core.ac.uk/v3/search/works/?q=${q}&limit=10`);
+      const d = await r.json();
+      return (d?.results || []).map((p: any) => ({
+        title: p.title,
+        authors: (p.authors || []).map((a: any) => a.name).slice(0, 4).join(", "),
+        year: p.yearPublished ? String(p.yearPublished) : "",
+        journal: p.publisher || "",
+        abstract: p.abstract || "",
+        url: p.downloadUrl || (p.doi ? `https://doi.org/${p.doi}` : ""),
+        source: "CORE",
+        id: p.id ? String(p.id) : p.doi,
+      }));
+    },
+  },
   crossref: {
     name: "CrossRef", icon: "🔗", color: "#E47F2E",
     async search(terms) {
