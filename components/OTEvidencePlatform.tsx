@@ -198,6 +198,9 @@ export default function OTEvidencePlatform() {
   const [bookmarks, setBookmarks] = useState<Article[]>([]);
   const [showBookmarks, setShowBookmarks] = useState(false);
   const [searchMeta, setSearchMeta] = useState<any>({});
+  const [toolModal, setToolModal] = useState<{ title: string; content: string; loading: boolean } | null>(null);
+  const [compareA, setCompareA] = useState(0);
+  const [compareB, setCompareB] = useState(1);
   const resultsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -280,6 +283,31 @@ Provide 3-6 interventions ranked by evidence strength. Be specific and reference
       }
     } catch (e) { console.error("Synthesis error", e); } finally { setSynthLoading(false); }
   }, [age, evLevel, query, domainObj]);
+
+  const runTool = useCallback(async (title: string, prompt: string) => {
+    setToolModal({ title, content: "", loading: true });
+    try {
+      const res = await fetch("/api/synthesize", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt }) });
+      const data = await res.json();
+      setToolModal({ title, content: data.text || "No output generated.", loading: false });
+    } catch { setToolModal({ title, content: "Error generating output. Please try again.", loading: false }); }
+  }, []);
+
+  const exportCitations = () => {
+    const apa = bookmarks.map((b, i) => {
+      const authors = b.authors || "Unknown";
+      const year = b.year ? `(${b.year})` : "(n.d.)";
+      const title = b.title || "Untitled";
+      const journal = b.journal ? `*${b.journal}*` : "";
+      const url = b.url ? ` Retrieved from ${b.url}` : "";
+      return `${i + 1}. ${authors} ${year}. ${title}. ${journal}${url}`;
+    }).join("\n\n");
+    const blob = new Blob([apa], { type: "text/plain" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "ot-citations-apa.txt";
+    link.click();
+  };
 
   const handleSearch = async () => {
     const terms = query.trim() || domainObj?.mesh?.join(" OR ") || "";
@@ -383,10 +411,38 @@ Provide 3-6 interventions ranked by evidence strength. Be specific and reference
                 </div>
               </div>
             ))}
-            {bookmarks.length > 0 && <button onClick={() => saveBookmarks([])} style={{ fontFamily: "'DM Sans',sans-serif", marginTop: 16, width: "100%", padding: 10, border: "1px solid #E8E4DC", borderRadius: 8, background: "#FAFAF7", cursor: "pointer", fontSize: 12, color: "#888" }}>Clear all bookmarks</button>}
+            {bookmarks.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 16 }}>
+                <button onClick={exportCitations} style={{ fontFamily: "'DM Sans',sans-serif", width: "100%", padding: 10, border: "1px solid #DDD", borderRadius: 8, background: "#F0FAF4", cursor: "pointer", fontSize: 12, color: "#2D854C", fontWeight: 600 }}>Export APA Citations (.txt)</button>
+                <button onClick={() => saveBookmarks([])} style={{ fontFamily: "'DM Sans',sans-serif", width: "100%", padding: 10, border: "1px solid #E8E4DC", borderRadius: 8, background: "#FAFAF7", cursor: "pointer", fontSize: 12, color: "#888" }}>Clear all bookmarks</button>
+              </div>
+            )}
           </div>
         </div>
       </>)}
+
+      {/* TOOL MODAL */}
+      {toolModal && (
+        <>
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 1001 }} onClick={() => setToolModal(null)} />
+          <div style={{ position: "fixed", top: "5vh", left: "50%", transform: "translateX(-50%)", width: "min(720px,92vw)", maxHeight: "85vh", background: "#fff", borderRadius: 16, boxShadow: "0 24px 80px rgba(0,0,0,0.18)", zIndex: 1002, display: "flex", flexDirection: "column" }}>
+            <div style={{ padding: "20px 24px", borderBottom: "1px solid #EEE", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+              <h2 style={{ fontFamily: "'Source Serif 4',serif", fontSize: 18, fontWeight: 700, margin: 0 }}>{toolModal.title}</h2>
+              <div style={{ display: "flex", gap: 8 }}>
+                {!toolModal.loading && toolModal.content && (
+                  <button onClick={() => navigator.clipboard.writeText(toolModal.content)} style={{ fontFamily: "'DM Sans',sans-serif", padding: "7px 14px", borderRadius: 8, border: "1px solid #DDD", background: "#FAFAF7", cursor: "pointer", fontSize: 12, fontWeight: 600, color: "#555" }}>Copy</button>
+                )}
+                <button onClick={() => setToolModal(null)} style={{ border: "none", background: "#F5F3EE", borderRadius: 8, width: 32, height: 32, cursor: "pointer", fontSize: 16 }}>✕</button>
+              </div>
+            </div>
+            <div style={{ padding: "20px 24px", overflowY: "auto", flex: 1 }}>
+              {toolModal.loading
+                ? <div style={{ textAlign: "center", padding: 40, fontFamily: "'DM Sans',sans-serif", color: "#888" }}><span className="pulse" style={{ fontSize: 32 }}>🤖</span><p style={{ marginTop: 12 }}>Generating…</p></div>
+                : <pre style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, lineHeight: 1.75, color: "#333", whiteSpace: "pre-wrap", margin: 0 }}>{toolModal.content}</pre>}
+            </div>
+          </div>
+        </>
+      )}
 
       {/* HEADER */}
       <div style={{ background: "linear-gradient(160deg,#1E3329 0%,#162620 60%,#0F1C16 100%)", padding: "36px 24px 32px", position: "relative", overflow: "hidden" }}>
@@ -513,6 +569,56 @@ Provide 3-6 interventions ranked by evidence strength. Be specific and reference
             </>)}
           </div>
         )}
+
+        {/* CLINICAL TOOLS */}
+        {synthesis && (() => {
+          const domainLabel = domainObj?.label || query.trim() || "General OT";
+          const topInterventions = (synthesis.interventions || []).slice(0, 3).map((i: any) => `${i.name}: ${i.clinical_tips}`).join("; ");
+          const interventionNames = (synthesis.interventions || []).map((i: any) => i.name).join(", ");
+          const tools = [
+            { icon: "🎯", label: "Goal Bank", desc: "SMART goals in IEP-ready language", fn: () => runTool("Goal Bank", `You are an expert pediatric occupational therapist. Generate 6-8 SMART goals for:\nDomain: ${domainLabel}\nAge: ${age} years\nInterventions: ${interventionNames}\n\nFor each goal provide:\n- A short-term goal (4-8 weeks)\n- A long-term goal (6 months)\n\nUse IEP-compatible language. Be specific, measurable, and functional. Include the condition, behavior, and criterion. Format clearly with numbered goals.`) },
+            { icon: "📋", label: "Parent Handout", desc: "Plain-language take-home activities", fn: () => runTool("Parent/Caregiver Handout", `Create a warm, friendly parent handout for home practice. Write at a 6th-grade reading level. Avoid jargon.\n\nChild context:\nDomain: ${domainLabel}\nAge: ${age} years\nTop strategies: ${topInterventions}\n\nInclude:\n1. What we are working on (1 short paragraph)\n2. Why it matters for your child (1 short paragraph)\n3. 4-5 activities to try at home — with step-by-step instructions\n4. What progress looks like\n5. When to reach out to your OT\n\nTone: warm, encouraging, practical.`) },
+            { icon: "📏", label: "Outcome Measures", desc: "Validated assessment tool recommendations", fn: () => runTool("Outcome Measure Recommendations", `You are a pediatric OT assessment expert. Recommend validated outcome measures for:\nDomain: ${domainLabel}\nAge: ${age} years\n\nFor each tool list:\n- Full name and abbreviation\n- What it measures\n- Age range\n- Administration time\n- Why appropriate for this domain\n- Free or requires purchase\n\nInclude 6-8 tools. Prioritize tools commonly accepted by insurance and school systems.`) },
+            { icon: "💳", label: "CPT Codes", desc: "Billing codes & medical necessity language", fn: () => runTool("CPT Codes & Documentation", `You are a pediatric OT billing and documentation expert. Provide CPT codes and documentation language for:\nDomain: ${domainLabel}\nAge: ${age} years\nInterventions: ${interventionNames}\n\nProvide:\n1. Primary CPT codes with full descriptions\n2. Secondary/supporting codes\n3. Medical necessity statement template\n4. Functional limitation language for insurance\n5. Common denial reasons and how to address them\n\nNote: Clinician should verify against current payer contracts.`) },
+            { icon: "📝", label: "Progress Note", desc: "SOAP note template pre-filled for this domain", fn: () => runTool("SOAP Note Template", `Generate a SOAP note template for a pediatric OT session:\nDomain: ${domainLabel}\nAge: ${age} years\nPrimary intervention: ${(synthesis.interventions || [])[0]?.name || domainLabel}\n\nS (Subjective): Include caregiver report prompts in [brackets]\nO (Objective): Observable behaviors and measurable data fields in [brackets]\nA (Assessment): Template language linking observations to goals, with [blanks]\nP (Plan): Next session plan template\n\nMake it insurance-ready and practical. Use [FILL IN] for clinician-specific data.`) },
+            { icon: "👨‍👩‍👧", label: "Family Mode", desc: "Rewrite synthesis in plain language", fn: () => runTool("Family-Friendly Summary", `Rewrite this OT evidence synthesis as a warm, plain-language explanation for a parent or caregiver. 6th-grade reading level. No jargon.\n\nOverview: ${synthesis.overview}\nBottom line: ${synthesis.clinical_bottom_line}\nKey approaches: ${(synthesis.interventions || []).slice(0, 3).map((i: any) => `${i.name}: ${i.description} Practical tip: ${i.clinical_tips}`).join("\n")}\n\nFocus on: what this means for their child, what to expect, and how they can help at home. Be encouraging and specific.`) },
+          ];
+          return (
+            <div style={{ marginBottom: 28 }}>
+              <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1.5, color: "#999", marginBottom: 10 }}>Clinical Tools</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(200px,1fr))", gap: 8 }}>
+                {tools.map(t => (
+                  <button key={t.label} onClick={t.fn} style={{ background: "#fff", border: "1px solid #E8E4DC", borderRadius: 10, padding: "14px 16px", cursor: "pointer", textAlign: "left", transition: "all 0.15s", display: "flex", flexDirection: "column", gap: 4 }}>
+                    <div style={{ fontSize: 20 }}>{t.icon}</div>
+                    <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, color: "#2C2825" }}>{t.label}</div>
+                    <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#999", lineHeight: 1.4 }}>{t.desc}</div>
+                  </button>
+                ))}
+              </div>
+
+              {/* INTERVENTION COMPARISON */}
+              {(synthesis.interventions || []).length >= 2 && (
+                <div style={{ marginTop: 12, background: "#fff", border: "1px solid #E8E4DC", borderRadius: 10, padding: "14px 16px" }}>
+                  <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, color: "#2C2825", marginBottom: 10 }}>⚖️ Compare Interventions</div>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <select value={compareA} onChange={e => setCompareA(Number(e.target.value))} style={{ fontFamily: "'DM Sans',sans-serif", padding: "7px 12px", borderRadius: 8, border: "1.5px solid #DDD", fontSize: 13, flex: 1, minWidth: 140 }}>
+                      {(synthesis.interventions || []).map((intv: any, i: number) => <option key={i} value={i}>{intv.name}</option>)}
+                    </select>
+                    <span style={{ fontFamily: "'DM Sans',sans-serif", color: "#AAA", fontWeight: 700 }}>vs</span>
+                    <select value={compareB} onChange={e => setCompareB(Number(e.target.value))} style={{ fontFamily: "'DM Sans',sans-serif", padding: "7px 12px", borderRadius: 8, border: "1.5px solid #DDD", fontSize: 13, flex: 1, minWidth: 140 }}>
+                      {(synthesis.interventions || []).map((intv: any, i: number) => <option key={i} value={i}>{intv.name}</option>)}
+                    </select>
+                    <button onClick={() => {
+                      const a = synthesis.interventions[compareA];
+                      const b = synthesis.interventions[compareB];
+                      runTool(`${a.name} vs ${b.name}`, `Compare these two OT interventions for a ${age}-year-old with ${domainLabel}:\n\nIntervention A: ${a.name}\nStrength: ${a.strength}\nDescription: ${a.description}\nDosage: ${a.dosage}\nContraindications: ${a.contraindications}\nEvidence: ${a.evidence_summary}\n\nIntervention B: ${b.name}\nStrength: ${b.strength}\nDescription: ${b.description}\nDosage: ${b.dosage}\nContraindications: ${b.contraindications}\nEvidence: ${b.evidence_summary}\n\nCompare on: evidence strength, best candidate profile, implementation differences, time/resource requirements, expected outcomes, and when to choose each. Format with clear headers.`);
+                    }} style={{ fontFamily: "'DM Sans',sans-serif", padding: "8px 18px", borderRadius: 8, border: "none", background: accent, color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap" }}>Compare</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* TABS + ARTICLES */}
         {(totalResults > 0 || bookmarks.length > 0) && (<>
