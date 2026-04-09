@@ -12,13 +12,33 @@ const DOMAINS = [
   { id: "behavioral", label: "Behavioral / Emotional", icon: "🧠", color: "#3D8EAE", mesh: ["behavioral intervention", "emotional regulation", "self-regulation"] },
   { id: "feeding", label: "Feeding & Oral Motor", icon: "🥄", color: "#AE6B3D", mesh: ["pediatric feeding disorder", "oral motor", "food selectivity"] },
 ];
-const AGES = ["3", "4", "5", "6", "3-4", "5-6", "3-6"];
+const AGES = [
+  { value: "0-1",   label: "0–1",   note: "Infant" },
+  { value: "2-3",   label: "2–3",   note: "Toddler" },
+  { value: "4-5",   label: "4–5",   note: "Preschool" },
+  { value: "6-8",   label: "6–8",   note: "Early School" },
+  { value: "9-12",  label: "9–12",  note: "School Age" },
+  { value: "13-18", label: "13–18", note: "Teen" },
+];
 const EV_LEVELS = ["Any Level", "Systematic Review", "RCT", "Cohort / Case-Control", "Case Series"];
+const EV_PATTERNS: Record<string, RegExp> = {
+  "Systematic Review": /systematic review|meta.analysis|cochrane/i,
+  "RCT": /randomized|randomised|controlled trial|\bRCT\b/i,
+  "Cohort / Case-Control": /cohort|case.control|longitudinal/i,
+  "Case Series": /case series|case report/i,
+};
 
 /* ─── API MODULES ─── */
 const buildAgeTerms = (age: string) => {
-  const y = age.includes("-") ? age.split("-") : [age, age];
-  return `(preschool OR pediatric OR child OR ages ${y[0]} to ${y[1]} OR young children)`;
+  const map: Record<string, string> = {
+    "0-1":   "(infant OR neonatal OR newborn OR 0 to 1 year)",
+    "2-3":   "(toddler OR 2 to 3 years OR early intervention)",
+    "4-5":   "(preschool OR 4 to 5 years OR kindergarten)",
+    "6-8":   "(school-age OR 6 to 8 years OR early elementary)",
+    "9-12":  "(school-age OR preadolescent OR 9 to 12 years)",
+    "13-18": "(adolescent OR teenager OR youth OR 13 to 18 years)",
+  };
+  return map[age] || "(pediatric OR child OR children)";
 };
 
 interface Article {
@@ -185,7 +205,7 @@ ${bookmarks.length>0?`<h2>Bookmarked Articles (${bookmarks.length})</h2>${bookma
 /* ─── MAIN COMPONENT ─── */
 export default function OTEvidencePlatform() {
   const [domain, setDomain] = useState<string | null>(null);
-  const [age, setAge] = useState("3-6");
+  const [age, setAge] = useState("4-5");
   const [evLevel, setEvLevel] = useState("Any Level");
   const [query, setQuery] = useState("");
   const [sourceResults, setSourceResults] = useState<Record<string, Article[]>>({});
@@ -219,6 +239,35 @@ export default function OTEvidencePlatform() {
   };
 
   const isBookmarked = (id: string) => bookmarks.some(b => b.id === id);
+
+  const resetSearch = () => {
+    setSourceResults({}); setSynthesis(null); setFetchStatus({});
+    setActiveTab("all"); setExpandedCards({}); setQuery(""); setDomain(null);
+  };
+
+  const filterByEvidence = (articles: Article[]): Article[] => {
+    if (evLevel === "Any Level") return articles;
+    const re = EV_PATTERNS[evLevel];
+    if (!re) return articles;
+    return articles.filter(a => re.test(a.title + " " + (a.abstract || "") + " " + (a.journal || "")));
+  };
+
+  const renderMarkdown = (text: string) => {
+    const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const inline = (s: string) => esc(s)
+      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+      .replace(/`(.+?)`/g, '<code style="background:#F0ECE4;padding:1px 5px;border-radius:3px;font-size:12px">$1</code>');
+    const lines = text.split("\n");
+    return lines.map(line => {
+      if (line.startsWith("### ")) return `<h4 style="font-size:13px;font-weight:700;margin:14px 0 5px;color:#2C2825">${inline(line.slice(4))}</h4>`;
+      if (line.startsWith("## "))  return `<h3 style="font-size:15px;font-weight:700;margin:18px 0 7px;color:#2C2825">${inline(line.slice(3))}</h3>`;
+      if (line.startsWith("# "))   return `<h2 style="font-size:17px;font-weight:700;margin:22px 0 9px;color:#2C2825;font-family:'Source Serif 4',serif">${inline(line.slice(2))}</h2>`;
+      if (line.match(/^[-*] /))    return `<div style="display:flex;gap:8px;margin:3px 0;font-size:13px"><span style="color:#4A8C65;font-weight:700;flex-shrink:0">·</span><span>${inline(line.slice(2))}</span></div>`;
+      if (line.match(/^\d+\. /))   { const n = line.match(/^\d+/)?.[0]; return `<div style="display:flex;gap:8px;margin:4px 0;font-size:13px"><span style="font-weight:700;min-width:22px;flex-shrink:0;color:#4A8C65">${n}.</span><span>${inline(line.replace(/^\d+\. /, ""))}</span></div>`; }
+      if (line.trim() === "")      return '<div style="height:8px"></div>';
+      return `<p style="margin:4px 0;line-height:1.75;font-size:13px">${inline(line)}</p>`;
+    }).join("");
+  };
 
   const domainObj = domain ? DOMAINS.find(d => d.id === domain) : null;
   const accent = domainObj?.color || "#4A8C65";
@@ -326,7 +375,7 @@ Provide 3-6 interventions ranked by evidence strength. Be specific and reference
       } catch (e) { console.error(`${key} error:`, e); allCollected[key] = []; setFetchStatus(p => ({ ...p, [key]: "error" })); }
     }));
     setLoading(false);
-    const allResults = Object.values(allCollected).flat();
+    const allResults = filterByEvidence(Object.values(allCollected).flat());
     if (allResults.length > 0) runSynthesis(allResults);
     setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: "smooth" }), 200);
   };
@@ -338,7 +387,7 @@ Provide 3-6 interventions ranked by evidence strength. Be specific and reference
     const open = expandedCards[r.id];
     const marked = isBookmarked(r.id);
     return (
-      <div key={r.id || i} className="card-hover" style={{ background: "#fff", borderRadius: 10, border: marked ? `1.5px solid ${accent}55` : "1px solid #E8E4DC", overflow: "hidden", transition: "all 0.15s" }}>
+      <div key={r.id || i} className="card-hover" style={{ background: r.isTrial ? "#F8F6FF" : "#fff", borderRadius: 10, border: marked ? `1.5px solid ${accent}55` : r.isTrial ? "1px solid #C5B8F0" : "1px solid #E8E4DC", overflow: "hidden", transition: "all 0.15s" }}>
         <div style={{ padding: "14px 18px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
             <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={() => toggleCard(r.id)}>
@@ -352,6 +401,7 @@ Provide 3-6 interventions ranked by evidence strength. Be specific and reference
                 style={{ width: 32, height: 32, borderRadius: 8, border: "none", background: marked ? `${accent}15` : "#F5F3EE", cursor: "pointer", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center", transition: "all 0.15s" }}>
                 {marked ? "📌" : "📎"}
               </button>
+              {r.isTrial && <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 10, fontWeight: 700, color: "#6B4C9A", background: "#6B4C9A15", padding: "2px 8px", borderRadius: 10 }}>🧪 Trial</span>}
               {r.citations != null && <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 10, color: "#999", fontWeight: 600 }}>📄 {r.citations}</span>}
               <span className="src-pill" style={{ background: `${src.color}11`, color: src.color }}>{src.icon} {r.source}</span>
             </div>
@@ -387,6 +437,15 @@ Provide 3-6 interventions ranked by evidence strength. Be specific and reference
         a{color:inherit;text-decoration:none} a:hover{text-decoration:underline}
         .bm-drawer{position:fixed;top:0;right:0;width:380px;max-width:90vw;height:100vh;background:#fff;box-shadow:-8px 0 40px rgba(0,0,0,0.12);z-index:1000;overflow-y:auto}
         .bm-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.3);z-index:999}
+        @media(max-width:600px){
+          .header-actions{flex-direction:column;align-items:flex-start!important}
+          .age-row{flex-wrap:wrap!important}
+          .search-row{flex-direction:column!important}
+          .search-row button{width:100%}
+          .domain-grid{grid-template-columns:repeat(2,1fr)!important}
+          .tools-grid{grid-template-columns:repeat(2,1fr)!important}
+          .intv-grid{grid-template-columns:1fr!important}
+        }
       `}</style>
 
       {/* BOOKMARKS DRAWER */}
@@ -438,7 +497,7 @@ Provide 3-6 interventions ranked by evidence strength. Be specific and reference
             <div style={{ padding: "20px 24px", overflowY: "auto", flex: 1 }}>
               {toolModal.loading
                 ? <div style={{ textAlign: "center", padding: 40, fontFamily: "'DM Sans',sans-serif", color: "#888" }}><span className="pulse" style={{ fontSize: 32 }}>🤖</span><p style={{ marginTop: 12 }}>Generating…</p></div>
-                : <pre style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, lineHeight: 1.75, color: "#333", whiteSpace: "pre-wrap", margin: 0 }}>{toolModal.content}</pre>}
+                : <div dangerouslySetInnerHTML={{ __html: renderMarkdown(toolModal.content) }} style={{ fontFamily: "'DM Sans',sans-serif", color: "#333" }} />}
             </div>
           </div>
         </>
@@ -453,11 +512,12 @@ Provide 3-6 interventions ranked by evidence strength. Be specific and reference
               <div style={{ width: 42, height: 42, borderRadius: 10, background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.12)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>📚</div>
               <div>
                 <h1 style={{ fontFamily: "'Source Serif 4',serif", fontSize: 28, fontWeight: 800, margin: 0, color: "#F0EDE4", letterSpacing: "-0.5px" }}>OT Evidence Finder</h1>
-                <p style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "rgba(240,237,228,0.5)", margin: 0, letterSpacing: "0.5px" }}>6 RESEARCH DATABASES · AI SYNTHESIS · PEDIATRIC AGES 3–6</p>
+                <p style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "rgba(240,237,228,0.5)", margin: 0, letterSpacing: "0.5px" }}>8 RESEARCH DATABASES · AI SYNTHESIS · BIRTH TO 18</p>
               </div>
             </div>
-            <div style={{ display: "flex", gap: 8 }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               {synthesis && <button onClick={() => exportSynthesisPDF(synthesis, searchMeta, bookmarks)} style={{ fontFamily: "'DM Sans',sans-serif", display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.08)", color: "#F0EDE4", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>📄 Export PDF</button>}
+              {(synthesis || Object.keys(sourceResults).length > 0) && <button onClick={resetSearch} style={{ fontFamily: "'DM Sans',sans-serif", display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.08)", color: "#F0EDE4", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>↺ New Search</button>}
               <button onClick={() => setShowBookmarks(true)} style={{ fontFamily: "'DM Sans',sans-serif", display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.08)", color: "#F0EDE4", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
                 📌 Bookmarks {bookmarks.length > 0 && <span style={{ background: "#D6603D", color: "#fff", borderRadius: 10, padding: "1px 7px", fontSize: 10, fontWeight: 700 }}>{bookmarks.length}</span>}
               </button>
@@ -472,7 +532,7 @@ Provide 3-6 interventions ranked by evidence strength. Be specific and reference
       <div style={{ maxWidth: 920, margin: "0 auto", padding: "28px 16px 80px" }}>
         {/* DOMAIN GRID */}
         <label style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "1.5px", color: "#999", display: "block", marginBottom: 10 }}>Clinical Domain</label>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(165px,1fr))", gap: 8, marginBottom: 24 }}>
+        <div className="domain-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(165px,1fr))", gap: 8, marginBottom: 24 }}>
           {DOMAINS.map(d => {
             const sel = domain === d.id;
             return <button key={d.id} onClick={() => setDomain(sel ? null : d.id)} style={{ border: sel ? `2px solid ${d.color}` : "2px solid transparent", borderRadius: 10, padding: "14px 12px", background: sel ? `${d.color}0D` : "#fff", cursor: "pointer", textAlign: "left", display: "flex", alignItems: "center", gap: 10, transition: "all 0.15s", boxShadow: sel ? `0 2px 12px ${d.color}22` : "0 1px 3px rgba(0,0,0,0.04)" }}>
@@ -486,8 +546,13 @@ Provide 3-6 interventions ranked by evidence strength. Be specific and reference
         <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 20 }}>
           <div style={{ flex: "1 1 200px" }}>
             <label style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "1.5px", color: "#999", display: "block", marginBottom: 8 }}>Age (years)</label>
-            <div style={{ display: "flex", gap: 4 }}>
-              {AGES.map(a => <button key={a} onClick={() => setAge(a)} style={{ fontFamily: "'DM Sans',sans-serif", padding: "7px 13px", borderRadius: 7, border: "none", background: age === a ? accent : "#E8E4DC", color: age === a ? "#fff" : "#666", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>{a}</button>)}
+            <div className="age-row" style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+              {AGES.map(a => (
+                <button key={a.value} onClick={() => setAge(a.value)} style={{ fontFamily: "'DM Sans',sans-serif", padding: "6px 10px", borderRadius: 7, border: "none", background: age === a.value ? accent : "#E8E4DC", color: age === a.value ? "#fff" : "#666", fontWeight: 600, fontSize: 12, cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 1, lineHeight: 1.2 }}>
+                  <span>{a.label}</span>
+                  <span style={{ fontSize: 9, opacity: 0.75, fontWeight: 400 }}>{a.note}</span>
+                </button>
+              ))}
             </div>
           </div>
           <div style={{ flex: "1 1 200px" }}>
@@ -499,7 +564,7 @@ Provide 3-6 interventions ranked by evidence strength. Be specific and reference
         </div>
 
         {/* SEARCH */}
-        <div style={{ display: "flex", gap: 10, marginBottom: 32 }}>
+        <div className="search-row" style={{ display: "flex", gap: 10, marginBottom: 32 }}>
           <input value={query} onChange={e => setQuery(e.target.value)} onKeyDown={e => e.key === "Enter" && handleSearch()}
             placeholder="e.g. 'sensory integration for classroom participation'"
             style={{ fontFamily: "'DM Sans',sans-serif", flex: 1, padding: "14px 18px", borderRadius: 12, border: "1.5px solid #DDD", fontSize: 14, background: "#fff", outline: "none" }} />
@@ -508,6 +573,20 @@ Provide 3-6 interventions ranked by evidence strength. Be specific and reference
             {loading ? "Searching…" : "Search All Sources"}
           </button>
         </div>
+
+        {/* CLINICAL TOOLS TEASER */}
+        {!synthesis && Object.keys(fetchStatus).length === 0 && (
+          <div style={{ background: "#fff", border: "1px dashed #DDD", borderRadius: 12, padding: "14px 18px", marginBottom: 24 }}>
+            <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1.5, color: "#BBB", marginBottom: 10 }}>Unlocks after search</div>
+            <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+              {[["🎯","Goal Bank"],["📋","Parent Handout"],["📏","Outcome Measures"],["💳","CPT Codes"],["📝","Progress Note"],["👨‍👩‍👧","Family Mode"],["⚖️","Compare Interventions"]].map(([icon, label]) => (
+                <div key={label} style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#CCC", display: "flex", alignItems: "center", gap: 5 }}>
+                  <span>{icon}</span><span>{label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* FETCH STATUS */}
         {Object.keys(fetchStatus).length > 0 && (
@@ -549,7 +628,7 @@ Provide 3-6 interventions ranked by evidence strength. Be specific and reference
                   </summary>
                   <div style={{ padding: "4px 18px 18px", fontFamily: "'DM Sans',sans-serif", fontSize: 13, lineHeight: 1.7, color: "#555" }}>
                     <p style={{ marginTop: 0 }}>{intv.description}</p>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+                    <div className="intv-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
                       {([["AGE CONSIDERATIONS",intv.age_specific],["DOSAGE",intv.dosage],["CONTRAINDICATIONS",intv.contraindications]] as [string,string][]).map(([label,val]) => val ? <div key={label} style={{ background: "#fff", borderRadius: 8, padding: "10px 14px", border: "1px solid #EEE" }}><div style={{ fontSize: 10, fontWeight: 700, color: "#AAA", marginBottom: 3, textTransform: "uppercase", letterSpacing: 1 }}>{label}</div>{val}</div> : null)}
                     </div>
                     <div style={{ background: "#fff", borderRadius: 8, padding: "10px 14px", border: "1px solid #EEE", marginBottom: 8 }}><div style={{ fontSize: 10, fontWeight: 700, color: "#AAA", marginBottom: 3, textTransform: "uppercase", letterSpacing: 1 }}>EVIDENCE</div>{intv.evidence_summary}</div>
@@ -558,6 +637,9 @@ Provide 3-6 interventions ranked by evidence strength. Be specific and reference
                 </details>
               ))}
               {synthesis.gaps && <div style={{ background: "#FFF8ED", border: "1px solid #EED", borderRadius: 10, padding: "14px 18px", marginTop: 16, marginBottom: 16 }}><div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700, color: "#B8860B", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>🔍 Evidence Gaps</div><p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.6, color: "#665" }}>{synthesis.gaps}</p></div>}
+              <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#AAA", background: "#FAFAF7", border: "1px solid #EEE", borderRadius: 8, padding: "8px 12px", marginTop: 8 }}>
+                ⚠️ AI synthesis supports clinical reasoning — always verify against current literature and professional judgement. Not a substitute for clinical evaluation.
+              </div>
               {synthesis.suggested_searches?.length > 0 && (
                 <div style={{ marginTop: 16 }}>
                   <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700, color: "#AAA", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Suggested Follow-up Searches</div>
@@ -586,7 +668,7 @@ Provide 3-6 interventions ranked by evidence strength. Be specific and reference
           return (
             <div style={{ marginBottom: 28 }}>
               <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1.5, color: "#999", marginBottom: 10 }}>Clinical Tools</div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(200px,1fr))", gap: 8 }}>
+              <div className="tools-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(200px,1fr))", gap: 8 }}>
                 {tools.map(t => (
                   <button key={t.label} onClick={t.fn} style={{ background: "#fff", border: "1px solid #E8E4DC", borderRadius: 10, padding: "14px 16px", cursor: "pointer", textAlign: "left", transition: "all 0.15s", display: "flex", flexDirection: "column", gap: 4 }}>
                     <div style={{ fontSize: 20 }}>{t.icon}</div>
@@ -608,11 +690,11 @@ Provide 3-6 interventions ranked by evidence strength. Be specific and reference
                     <select value={compareB} onChange={e => setCompareB(Number(e.target.value))} style={{ fontFamily: "'DM Sans',sans-serif", padding: "7px 12px", borderRadius: 8, border: "1.5px solid #DDD", fontSize: 13, flex: 1, minWidth: 140 }}>
                       {(synthesis.interventions || []).map((intv: any, i: number) => <option key={i} value={i}>{intv.name}</option>)}
                     </select>
-                    <button onClick={() => {
+                    <button disabled={compareA === compareB} onClick={() => {
                       const a = synthesis.interventions[compareA];
                       const b = synthesis.interventions[compareB];
                       runTool(`${a.name} vs ${b.name}`, `Compare these two OT interventions for a ${age}-year-old with ${domainLabel}:\n\nIntervention A: ${a.name}\nStrength: ${a.strength}\nDescription: ${a.description}\nDosage: ${a.dosage}\nContraindications: ${a.contraindications}\nEvidence: ${a.evidence_summary}\n\nIntervention B: ${b.name}\nStrength: ${b.strength}\nDescription: ${b.description}\nDosage: ${b.dosage}\nContraindications: ${b.contraindications}\nEvidence: ${b.evidence_summary}\n\nCompare on: evidence strength, best candidate profile, implementation differences, time/resource requirements, expected outcomes, and when to choose each. Format with clear headers.`);
-                    }} style={{ fontFamily: "'DM Sans',sans-serif", padding: "8px 18px", borderRadius: 8, border: "none", background: accent, color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap" }}>Compare</button>
+                    }} style={{ fontFamily: "'DM Sans',sans-serif", padding: "8px 18px", borderRadius: 8, border: "none", background: compareA === compareB ? "#CCC" : accent, color: "#fff", fontWeight: 700, fontSize: 13, cursor: compareA === compareB ? "not-allowed" : "pointer", whiteSpace: "nowrap" }}>Compare</button>
                   </div>
                 </div>
               )}
@@ -636,7 +718,7 @@ Provide 3-6 interventions ranked by evidence strength. Be specific and reference
         </>)}
 
         <p style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#BBB", marginTop: 36, fontStyle: "italic", lineHeight: 1.6 }}>
-          Aggregates PubMed, Semantic Scholar, OpenAlex, ERIC, ClinicalTrials.gov & CrossRef. AI synthesis supports clinical reasoning — verify against current literature. Not medical advice.
+          Aggregates PubMed, Semantic Scholar, OpenAlex, ERIC, ClinicalTrials.gov, Europe PMC, CORE & CrossRef. AI synthesis supports clinical reasoning — always verify against current literature and professional judgement. Not a substitute for clinical evaluation.
         </p>
       </div>
     </div>
