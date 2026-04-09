@@ -1,6 +1,4 @@
-"use client";
-import OTEvidencePlatform from "@/components/OTEvidencePlatform";
-
+import { redirect } from "next/navigation";
 export default function Home() {
-  return <OTEvidencePlatform />;
+  redirect("/search");
 }
