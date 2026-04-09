@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Providers from "@/components/Providers";
 import Sidebar from "@/components/Sidebar";
 
 export const metadata: Metadata = {
@@ -27,10 +28,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         `}</style>
       </head>
       <body>
-        <div className="seedling-shell">
-          <Sidebar />
-          <main className="seedling-main">{children}</main>
-        </div>
+        <Providers>
+          <div className="seedling-shell">
+            <Sidebar />
+            <main className="seedling-main">{children}</main>
+          </div>
+        </Providers>
       </body>
     </html>
   );

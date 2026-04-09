@@ -1,6 +1,9 @@
 "use client";
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Bookmark, BookmarkCheck, ChevronDown, ChevronUp, PanelLeftOpen } from "lucide-react";
+import { Bookmark, BookmarkCheck, ChevronDown, ChevronUp } from "lucide-react";
+import { useUser } from "@clerk/nextjs";
+import { useMutation, useQuery } from "convex/react";
+import { api } from "@/convex/_generated/api";
 
 /* ─── CONFIG ─── */
 const DOMAINS = [
@@ -224,6 +227,12 @@ export default function OTEvidencePlatform() {
   const [compareB, setCompareB] = useState(1);
   const resultsRef = useRef<HTMLDivElement>(null);
 
+  // Auth + Convex
+  const { isSignedIn } = useUser();
+  const convexBookmarks = useQuery(api.bookmarks.list) ?? [];
+  const toggleConvexBookmark = useMutation(api.bookmarks.toggle);
+  const saveSearch = useMutation(api.searches.save);
+
   useEffect(() => {
     try { const s = localStorage.getItem("ot-bookmarks"); if (s) setBookmarks(JSON.parse(s)); } catch {}
   }, []);
@@ -233,13 +242,31 @@ export default function OTEvidencePlatform() {
     try { localStorage.setItem("ot-bookmarks", JSON.stringify(bm)); } catch {}
   };
 
-  const toggleBookmark = (article: Article) => {
-    const exists = bookmarks.find(b => b.id === article.id);
-    if (exists) saveBookmarks(bookmarks.filter(b => b.id !== article.id));
-    else saveBookmarks([...bookmarks, { ...article, bookmarkedAt: Date.now() }]);
+  const toggleBookmark = async (article: Article) => {
+    if (isSignedIn) {
+      await toggleConvexBookmark({
+        articleId: article.id,
+        title: article.title,
+        authors: article.authors,
+        year: article.year || undefined,
+        journal: article.journal || undefined,
+        url: article.url || undefined,
+        source: article.source,
+        abstract: article.abstract || undefined,
+        citations: article.citations ?? undefined,
+        isTrial: article.isTrial ?? undefined,
+      });
+    } else {
+      const exists = bookmarks.find(b => b.id === article.id);
+      if (exists) saveBookmarks(bookmarks.filter(b => b.id !== article.id));
+      else saveBookmarks([...bookmarks, { ...article, bookmarkedAt: Date.now() }]);
+    }
   };
 
-  const isBookmarked = (id: string) => bookmarks.some(b => b.id === id);
+  const isBookmarked = (id: string) =>
+    isSignedIn
+      ? convexBookmarks.some((b) => b.articleId === id)
+      : bookmarks.some(b => b.id === id);
 
   const resetSearch = () => {
     setSourceResults({}); setSynthesis(null); setFetchStatus({});
@@ -329,7 +356,19 @@ Provide 3-6 interventions ranked by evidence strength. Be specific and reference
       });
       const data = await res.json();
       if (data.text) {
-        setSynthesis(JSON.parse(data.text.replace(/```json|```/g, "").trim()));
+        const parsed = JSON.parse(data.text.replace(/```json|```/g, "").trim());
+        setSynthesis(parsed);
+        if (isSignedIn) {
+          saveSearch({
+            domain: domainObj?.id,
+            domainLabel,
+            age,
+            evLevel,
+            query: query.trim() || domainLabel,
+            articleCount: allResults.length,
+            synthesis: parsed,
+          }).catch(() => {});
+        }
       }
     } catch (e) { console.error("Synthesis error", e); } finally { setSynthLoading(false); }
   }, [age, evLevel, query, domainObj]);
@@ -344,7 +383,10 @@ Provide 3-6 interventions ranked by evidence strength. Be specific and reference
   }, []);
 
   const exportCitations = () => {
-    const apa = bookmarks.map((b, i) => {
+    const source = isSignedIn
+      ? convexBookmarks.map(b => ({ ...b, id: b.articleId }))
+      : bookmarks;
+    const apa = source.map((b, i) => {
       const authors = b.authors || "Unknown";
       const year = b.year ? `(${b.year})` : "(n.d.)";
       const title = b.title || "Untitled";
@@ -536,7 +578,11 @@ Provide 3-6 interventions ranked by evidence strength. Be specific and reference
               style={{ fontFamily: "'DM Sans',sans-serif", display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 8, border: "1px solid #DEDBD4", background: "#FAFAF7", color: "#4A5568", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
               <Bookmark size={13} strokeWidth={2} />
               Saved
-              {bookmarks.length > 0 && <span style={{ background: "#2D6A4F", color: "#fff", borderRadius: 10, padding: "1px 7px", fontSize: 10, fontWeight: 700 }}>{bookmarks.length}</span>}
+              {(isSignedIn ? convexBookmarks.length : bookmarks.length) > 0 && (
+                <span style={{ background: "#2D6A4F", color: "#fff", borderRadius: 10, padding: "1px 7px", fontSize: 10, fontWeight: 700 }}>
+                  {isSignedIn ? convexBookmarks.length : bookmarks.length}
+                </span>
+              )}
             </button>
           </div>
         </div>
@@ -586,6 +632,15 @@ Provide 3-6 interventions ranked by evidence strength. Be specific and reference
             {loading ? "Searching…" : "Search All Sources"}
           </button>
         </div>
+
+        {/* SIGN-IN NUDGE */}
+        {!isSignedIn && Object.keys(fetchStatus).length === 0 && (
+          <div style={{ background: "#EEF6F1", border: "1px solid #C5E0D0", borderRadius: 10, padding: "12px 16px", marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+            <p style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#2D4A3E", margin: 0 }}>
+              <strong>Sign in</strong> to save searches, sync bookmarks across devices, and access My Cases.
+            </p>
+          </div>
+        )}
 
         {/* CLINICAL TOOLS TEASER */}
         {!synthesis && Object.keys(fetchStatus).length === 0 && (
