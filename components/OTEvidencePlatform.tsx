@@ -84,7 +84,7 @@ const apis: Record<string, { name: string; icon: string; color: string; search: 
     name: "ClinicalTrials.gov", icon: "🧪", color: "#6B4C9A",
     async search(terms) {
       const q = encodeURIComponent(`${terms} occupational therapy`);
-      const r = await fetch(`https://clinicaltrials.gov/api/v2/studies?query.cond=${q}&query.term=pediatric+children&filter.ageRange=CHILD&pageSize=8&format=json`);
+      const r = await fetch(`https://clinicaltrials.gov/api/v2/studies?query.cond=${q}&query.term=pediatric+children&pageSize=8&format=json`);
       const d = await r.json();
       return (d?.studies||[]).map((s: any) => { const p=s.protocolSection; const id=p?.identificationModule; const st=p?.statusModule; const ds=p?.designModule;
         return { title:id?.briefTitle||id?.officialTitle||"", authors:id?.organization?.fullName||"", year:st?.startDateStruct?.date?.substring(0,4)||"", journal:`Phase: ${ds?.phases?.join(", ")||"N/A"} · Status: ${st?.overallStatus||"Unknown"}`, abstract:p?.descriptionModule?.briefSummary||"", url:`https://clinicaltrials.gov/study/${id?.nctId}`, source:"ClinicalTrials.gov", id:id?.nctId, isTrial:true };
